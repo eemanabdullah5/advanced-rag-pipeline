@@ -8,5 +8,5 @@ qdrant-client==1.9.1
 rank-bm25==0.2.2
 flashrank==0.2.8
 sentence-transformers==3.0.1
-openai==1.35.3
+ollama==0.6.2
 python-dotenv==1.0.1

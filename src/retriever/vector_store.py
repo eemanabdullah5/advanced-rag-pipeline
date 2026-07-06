@@ -10,7 +10,7 @@ from qdrant_client.http import models as qmodels
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_DIM = 1536
+EMBEDDING_DIM = 768  # nomic-embed-text (Ollama) output dimension
 
 
 class QdrantVectorStore:

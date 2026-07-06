@@ -1,19 +1,20 @@
 """Streamlit frontend for the Enterprise Advanced RAG Dashboard.
 
 Runs the full RAG pipeline in-process (no backend API): Docling parsing,
-parent-child chunking, OpenAI embeddings, Qdrant retrieval, FlashRank
-re-ranking, and OpenAI answer generation all happen inline in this script.
+parent-child chunking, Ollama embeddings, Qdrant retrieval, FlashRank
+re-ranking, and local Ollama (llama3) answer generation all happen inline
+in this script.
 """
-
-import logging
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+import logging
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+import ollama
 import streamlit as st
 from dotenv import load_dotenv
-from openai import OpenAI
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -27,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-EMBEDDING_MODEL = "text-embedding-3-small"
-GENERATION_MODEL = "gpt-4o-mini"
+EMBEDDING_MODEL = "nomic-embed-text"
+GENERATION_MODEL = "llama3"
 COLLECTION_NAME = "rag_session"
 CANDIDATE_TOP_K = 20
 
@@ -36,11 +37,8 @@ RAW_DIR = Path("data/raw")
 
 
 @st.cache_resource(show_spinner=False)
-def get_openai_client() -> OpenAI:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set. Add it to your .env file.")
-    return OpenAI(api_key=api_key)
+def get_ollama_client() -> ollama.Client:
+    return ollama.Client()
 
 
 @st.cache_resource(show_spinner=False)
@@ -66,9 +64,9 @@ def get_vector_store() -> QdrantVectorStore:
     return st.session_state.vector_store
 
 
-def embed_texts(client: OpenAI, texts: List[str]) -> List[List[float]]:
-    response = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
-    return [item.embedding for item in response.data]
+def embed_texts(client: ollama.Client, texts: List[str]) -> List[List[float]]:
+    response = client.embed(model=EMBEDDING_MODEL, input=texts)
+    return [list(embedding) for embedding in response.embeddings]
 
 
 def render_sidebar() -> None:
@@ -79,8 +77,8 @@ def render_sidebar() -> None:
             - **Parser:** Docling
             - **Chunker:** Parent-Child
             - **Database:** Qdrant (in-memory)
-            - **Embeddings:** OpenAI `{EMBEDDING_MODEL}`
-            - **Generation:** OpenAI `{GENERATION_MODEL}`
+            - **Embeddings:** Ollama `{EMBEDDING_MODEL}`
+            - **Generation:** Ollama `{GENERATION_MODEL}`
             - **Re-ranker:** FlashRank
             """
         )
@@ -97,7 +95,7 @@ def ingest_document(uploaded_file: Any) -> Dict[str, Any]:
 
     parser = get_parser()
     chunker = get_chunker()
-    client = get_openai_client()
+    client = get_ollama_client()
     vector_store = get_vector_store()
 
     logger.info("Parsing '%s' with DoclingParser", local_path)
@@ -177,7 +175,7 @@ def render_sources(sources: List[Dict[str, Any]]) -> None:
             st.text(source.get("text", ""))
 
 
-def generate_answer(client: OpenAI, query: str, context_chunks: List[Dict[str, Any]]) -> str:
+def generate_answer(client: ollama.Client, query: str, context_chunks: List[Dict[str, Any]]) -> str:
     context_block = "\n\n".join(
         f"[Source {idx}]\n{chunk['parent_text']}" for idx, chunk in enumerate(context_chunks, start=1)
     )
@@ -192,12 +190,12 @@ def generate_answer(client: OpenAI, query: str, context_chunks: List[Dict[str, A
         },
         {"role": "user", "content": f"Context:\n{context_block}\n\nQuestion: {query}"},
     ]
-    response = client.chat.completions.create(model=GENERATION_MODEL, messages=messages, temperature=0.2)
-    return response.choices[0].message.content or "No answer returned."
+    response = client.chat(model=GENERATION_MODEL, messages=messages, options={"temperature": 0.2})
+    return response.message.content or "No answer returned."
 
 
 def run_query(query: str) -> Dict[str, Any]:
-    client = get_openai_client()
+    client = get_ollama_client()
     vector_store = get_vector_store()
     reranker = get_reranker()
 
